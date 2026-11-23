@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <!-- Lente mitad luz, mitad sombra, con el punto rojo (Rojo selectivo) -->
+    <path android:fillColor="#FFFFFFFF"
+        android:pathData="M54,31 A22,22 0 0,0 54,75 Z" />
+    <path android:fillColor="#FF3A3A42"
+        android:pathData="M54,31 A22,22 0 0,1 54,75 Z" />
+    <path android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="3"
+        android:pathData="M54,28 A25,25 0 1,1 53.99,28 Z" />
+    <path android:fillColor="#FFE53935"
+        android:pathData="M68.0,35.5 a4.5,4.5 0 1,0 9.0,0 a4.5,4.5 0 1,0 -9.0,0 Z" />
+</vector>
