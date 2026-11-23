@@ -66,6 +66,7 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.DeleteForever
 import androidx.compose.material.icons.rounded.DriveFileMove
+import androidx.compose.material.icons.rounded.Draw
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
@@ -656,6 +657,7 @@ private fun CabeceraSeleccion(n: Int, onCerrar: () -> Unit, onTodo: () -> Unit) 
 @Composable
 private fun BarraSeleccion(a: MainActivity, elegidos: List<Media>, limpiar: () -> Unit) {
     var mover by remember { mutableStateOf(false) }
+    var firmar by remember { mutableStateOf(false) }
     val favs = a.favoritos.value
     val todosFav = elegidos.isNotEmpty() && elegidos.all { it.uri.toString() in favs }
     Row(Modifier.fillMaxWidth().background(Tarjeta).padding(horizontal = 8.dp, vertical = 4.dp)) {
@@ -667,7 +669,39 @@ private fun BarraSeleccion(a: MainActivity, elegidos: List<Media>, limpiar: () -
         if (a.bovedaAbierta.value) {
             Accion(Icons.Rounded.Lock, "Privado") { a.ocultar(elegidos) { limpiar() } }
         }
+        if (elegidos.any { !it.video }) Accion(Icons.Rounded.Draw, "Firmar") { firmar = true }
         Accion(Icons.Rounded.Delete, "Papelera", Color(0xFFFF6B6B)) { a.aPapelera(elegidos) { limpiar() } }
+    }
+    if (firmar) {
+        val nFotos = elegidos.count { !it.video }
+        var f by remember { mutableStateOf(a.firma.value) }
+        AlertDialog(
+            onDismissRequest = { firmar = false },
+            title = { Text(if (nFotos == 1) "Firmar 1 foto" else "Firmar $nFotos fotos") },
+            text = {
+                Column {
+                    Text(
+                        "Se guarda una copia de cada foto con la fecha en que se tomó y tu firma, abajo a la izquierda. " +
+                            "Las originales no se tocan." +
+                            (if (nFotos < elegidos.size) " Los videos se omiten." else ""),
+                        fontSize = 14.sp, color = Suave
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedTextField(
+                        value = f, onValueChange = { f = it.take(30) }, singleLine = true,
+                        label = { Text("Firma (opcional)") }, modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    firmar = false
+                    a.firmarLote(elegidos, f.trim())
+                    limpiar()
+                }) { Text("Firmar", color = Acento) }
+            },
+            dismissButton = { TextButton(onClick = { firmar = false }) { Text("Cancelar", color = Suave) } }
+        )
     }
     if (mover) {
         MoverDialog(a, onElegir = { carpeta ->
@@ -1314,7 +1348,7 @@ private fun AjustesScreen(a: MainActivity) {
             Spacer(Modifier.height(12.dp))
             TarjetaAjuste("Tamaño de miniaturas", "Pellizca la cuadrícula de fotos para hacerlas más grandes o pequeñas.", null) {}
             Spacer(Modifier.height(24.dp))
-            Text("Baúl 2.6 · Tecnología Universal Avanzada", color = Suave, fontSize = 13.sp)
+            Text("Baúl 2.7 · Tecnología Universal Avanzada", color = Suave, fontSize = 13.sp)
         }
     }
     if (dialogoClave) ClaveDialog(a, 0) { dialogoClave = false; refrescar++ }
@@ -1426,6 +1460,35 @@ private fun MiniaturaBoveda(a: MainActivity, item: VItem, modifier: Modifier) {
 
 private enum class DialogoBoveda { NADA, RESPALDAR, IMPORTAR }
 
+/** Tarjeta de álbum privado con portada (la foto más reciente). n < 0 = no mostrar cantidad. */
+@Composable
+private fun AlbumPrivado(
+    a: MainActivity, nombre: String, portada: VItem?, n: Int, activo: Boolean, icono: ImageVector,
+    onClick: () -> Unit, onLongClick: () -> Unit
+) {
+    Column(
+        Modifier.width(88.dp).clip(RoundedCornerShape(12.dp))
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick).padding(4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            Modifier.size(78.dp).clip(RoundedCornerShape(12.dp)).background(Tarjeta)
+                .then(if (activo) Modifier.border(2.dp, Acento, RoundedCornerShape(12.dp)) else Modifier),
+            contentAlignment = Alignment.Center
+        ) {
+            if (portada != null) MiniaturaBoveda(a, portada, Modifier.fillMaxSize())
+            else Icon(icono, null, tint = if (activo) Acento else Suave, modifier = Modifier.size(30.dp))
+        }
+        Text(
+            nombre, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            color = if (activo) Acento else Color.White,
+            fontWeight = if (activo) FontWeight.Bold else FontWeight.Normal,
+            modifier = Modifier.padding(top = 4.dp)
+        )
+        if (n >= 0) Text("$n", fontSize = 11.sp, color = Suave)
+    }
+}
+
 @Composable
 private fun BovedaScreen(a: MainActivity) {
     val todosItems = a.bovedaItems.value
@@ -1433,7 +1496,10 @@ private fun BovedaScreen(a: MainActivity) {
     var dialogo by remember { mutableStateOf(DialogoBoveda.NADA) }
     var albumSel by remember { mutableStateOf<String?>(null) } // null = todo
     var dialogoAlbum by remember { mutableStateOf(false) }
-    val albumes = remember(todosItems) { Boveda.albumes(todosItems) }
+    var nuevoAlbum by remember { mutableStateOf(false) }
+    var opcionesAlbum by remember { mutableStateOf<String?>(null) }
+    val versionAl = a.versionAlbumes.intValue
+    val albumes = remember(todosItems, versionAl) { a.albumesBoveda(todosItems) }
     val items = remember(todosItems, albumSel) {
         val f = albumSel
         if (f == null) todosItems else todosItems.filter { it.album == f }
@@ -1468,14 +1534,30 @@ private fun BovedaScreen(a: MainActivity) {
                 )
             }
         }
-        if (albumes.isNotEmpty()) {
-            LazyRow(contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                item { Pildora("Todo", albumSel == null) { albumSel = null; sel = emptySet() } }
-                items(albumes) { al -> Pildora(al, albumSel == al) { albumSel = al; sel = emptySet() } }
+        // Álbumes con portada (mantén presionado uno para renombrarlo o quitarlo)
+        LazyRow(contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            item {
+                AlbumPrivado(a, "Todo", todosItems.firstOrNull(), todosItems.size, albumSel == null, Icons.Rounded.PhotoLibrary,
+                    onClick = { albumSel = null; sel = emptySet() }, onLongClick = {})
+            }
+            items(albumes) { al ->
+                val delAlbum = todosItems.filter { it.album == al }
+                AlbumPrivado(a, al, delAlbum.firstOrNull(), delAlbum.size, albumSel == al, Icons.Rounded.Folder,
+                    onClick = { albumSel = al; sel = emptySet() }, onLongClick = { opcionesAlbum = al })
+            }
+            item {
+                AlbumPrivado(a, "Nuevo", null, -1, false, Icons.Rounded.CreateNewFolder,
+                    onClick = { nuevoAlbum = true }, onLongClick = {})
             }
         }
         Box(Modifier.weight(1f)) {
-            if (items.isEmpty()) {
+            if (items.isEmpty() && albumSel != null) {
+                Text(
+                    "Álbum vacío.\n\nPara llenarlo: ve a «Todo», selecciona fotos o videos y toca «Álbum».",
+                    color = Suave, fontSize = 15.sp, textAlign = TextAlign.Center,
+                    modifier = Modifier.align(Alignment.Center).padding(32.dp)
+                )
+            } else if (items.isEmpty()) {
                 Text(
                     "Vacío.\n\nPara guardar aquí: regresa con la flecha, selecciona fotos o videos en la galería " +
                         "y toca «Privado». Luego vuelve con el candado de arriba.",
@@ -1491,7 +1573,7 @@ private fun BovedaScreen(a: MainActivity) {
                             Modifier.aspectRatio(1f).padding(1.dp).combinedClickable(
                                 onClick = {
                                     if (sel.isNotEmpty()) sel = if (s) sel - v.file else sel + v.file
-                                    else a.ir(Pant.VisorBoveda(i))
+                                    else a.ir(Pant.VisorBoveda(todosItems.indexOf(v).coerceAtLeast(0)))
                                 },
                                 onLongClick = { sel = if (s) sel - v.file else sel + v.file }
                             )
@@ -1553,6 +1635,69 @@ private fun BovedaScreen(a: MainActivity) {
             },
             confirmButton = {},
             dismissButton = { TextButton(onClick = { dialogoAlbum = false }) { Text("Cancelar", color = Suave) } }
+        )
+    }
+
+    if (nuevoAlbum) {
+        var nombre by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { nuevoAlbum = false },
+            title = { Text("Nuevo álbum privado") },
+            text = {
+                OutlinedTextField(
+                    value = nombre, onValueChange = { nombre = it.take(30) }, singleLine = true,
+                    placeholder = { Text("Nombre") }, modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (nombre.isNotBlank()) {
+                        a.crearAlbumBoveda(nombre.trim())
+                        albumSel = nombre.trim()
+                        sel = emptySet()
+                    }
+                    nuevoAlbum = false
+                }) { Text("Crear", color = Acento) }
+            },
+            dismissButton = { TextButton(onClick = { nuevoAlbum = false }) { Text("Cancelar", color = Suave) } }
+        )
+    }
+
+    val opAl = opcionesAlbum
+    if (opAl != null) {
+        var nombre by remember(opAl) { mutableStateOf(opAl) }
+        var confirmarQuitar by remember(opAl) { mutableStateOf(false) }
+        AlertDialog(
+            onDismissRequest = { opcionesAlbum = null },
+            title = { Text(if (confirmarQuitar) "¿Quitar «$opAl»?" else "Álbum «$opAl»") },
+            text = {
+                if (confirmarQuitar) {
+                    Text("Las fotos y videos NO se borran: quedan en «Todo», sin álbum.", fontSize = 14.sp, color = Suave)
+                } else {
+                    Column {
+                        OutlinedTextField(
+                            value = nombre, onValueChange = { nombre = it.take(30) }, singleLine = true,
+                            label = { Text("Nombre") }, modifier = Modifier.fillMaxWidth()
+                        )
+                        TextButton(onClick = { confirmarQuitar = true }) {
+                            Text("Quitar álbum", color = Color(0xFFFF6B6B))
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (confirmarQuitar) {
+                        a.borrarAlbumBoveda(opAl)
+                        if (albumSel == opAl) albumSel = null
+                    } else if (nombre.isNotBlank() && nombre.trim() != opAl) {
+                        a.renombrarAlbumBoveda(opAl, nombre.trim())
+                        if (albumSel == opAl) albumSel = nombre.trim()
+                    }
+                    opcionesAlbum = null
+                }) { Text(if (confirmarQuitar) "Quitar" else "Guardar", color = if (confirmarQuitar) Color(0xFFFF6B6B) else Acento) }
+            },
+            dismissButton = { TextButton(onClick = { opcionesAlbum = null }) { Text("Cancelar", color = Suave) } }
         )
     }
 

@@ -12,8 +12,8 @@ android {
         applicationId = "com.tua.baul"
         minSdk = 30
         targetSdk = 35
-        versionCode = 9
-        versionName = "2.6"
+        versionCode = 10
+        versionName = "2.7"
     }
 
     // Llave fija: cada APK nuevo se instala encima del anterior (¡y no se pierde la bóveda!)

@@ -173,6 +173,53 @@ object Desenfoques {
         }
     }
 
+    /**
+     * Sujeto a color: toma el fondo de [fondo] (con filtro) y el sujeto de [sujeto] (a color),
+     * según la máscara del sujeto. Las dos imágenes deben tener el mismo tamaño.
+     */
+    suspend fun combinar(fondo: Bitmap, sujeto: Bitmap, auto: Bitmap): Bitmap = withContext(Dispatchers.Default) {
+        val w = fondo.width
+        val h = fondo.height
+        val suj = if (sujeto.width != w || sujeto.height != h) Bitmap.createScaledBitmap(sujeto, w, h, true) else sujeto
+        val mw = auto.width
+        val mh = auto.height
+        val ma = IntArray(mw * mh)
+        auto.getPixels(ma, 0, mw, 0, 0, mw, mh)
+        val msk = FloatArray(mw * mh) { ((ma[it] ushr 24) and 0xFF) / 255f }
+        val pf = IntArray(w * h)
+        fondo.getPixels(pf, 0, w, 0, 0, w, h)
+        val ps = IntArray(w * h)
+        suj.getPixels(ps, 0, w, 0, 0, w, h)
+        val partes = Runtime.getRuntime().availableProcessors().coerceIn(2, 8)
+        val filas = (h + partes - 1) / partes
+        val kx = mw.toFloat() / w
+        val ky = mh.toFloat() / h
+        coroutineScope {
+            (0 until partes).map { c ->
+                async {
+                    for (y in c * filas until min(h, (c + 1) * filas)) {
+                        var i = y * w
+                        for (x in 0 until w) {
+                            val t = muestra(msk, mw, mh, 1, 0, (x + 0.5f) * kx, (y + 0.5f) * ky)
+                            if (t > 0.004f) {
+                                val f = pf[i]
+                                val q = ps[i]
+                                val r = (((f shr 16) and 0xFF) + ((((q shr 16) and 0xFF) - ((f shr 16) and 0xFF)) * t)).roundToInt()
+                                val g = (((f shr 8) and 0xFF) + ((((q shr 8) and 0xFF) - ((f shr 8) and 0xFF)) * t)).roundToInt()
+                                val b = ((f and 0xFF) + (((q and 0xFF) - (f and 0xFF)) * t)).roundToInt()
+                                pf[i] = (0xFF shl 24) or (r.coerceIn(0, 255) shl 16) or (g.coerceIn(0, 255) shl 8) or b.coerceIn(0, 255)
+                            }
+                            i++
+                        }
+                    }
+                }
+            }.awaitAll()
+        }
+        val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        out.setPixels(pf, 0, w, 0, 0, w, h)
+        out
+    }
+
     /** Desenfoca el fondo (o las zonas pintadas) de la imagen ya editada. */
     suspend fun aplicar(src: Bitmap, d: Desenfoque, auto: Bitmap?): Bitmap = withContext(Dispatchers.Default) {
         if (!d.activo) return@withContext src

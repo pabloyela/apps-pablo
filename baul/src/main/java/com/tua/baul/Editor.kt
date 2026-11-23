@@ -141,8 +141,11 @@ data class Edicion(
     val sello: Boolean = false,
     val firma: String = "",
     val fechaSello: Long = 0L,
-    val desenf: Desenfoque = Desenfoque()
-)
+    val desenf: Desenfoque = Desenfoque(),
+    val sujetoColor: Boolean = false   // el filtro solo en el fondo; la persona queda a color
+) {
+    val quiereMascara get() = desenf.auto || (sujetoColor && estilo != null)
+}
 
 object Edit {
 
@@ -334,10 +337,11 @@ object Edit {
         val rec = withContext(Dispatchers.Default) { recortar(geo, e.geo.recorte) }
         val aj = ajustar(rec, e.aj)
         val est = e.estilo
-        val fil = if (est != null) Fx.apply(aj, FxUniforms.from(est, e.estiloAj)) else aj
+        val masc = if (e.quiereMascara && ctx != null) Desenfoques.mascaraSujeto(ctx, rec) else null
+        val fil0 = if (est != null) Fx.apply(aj, FxUniforms.from(est, e.estiloAj)) else aj
+        val fil = if (est != null && e.sujetoColor && masc != null) Desenfoques.combinar(fil0, aj, masc) else fil0
         val des = if (e.desenf.activo) {
-            val m = if (e.desenf.auto && ctx != null) Desenfoques.mascaraSujeto(ctx, rec) else null
-            Desenfoques.aplicar(fil, e.desenf, m)
+            Desenfoques.aplicar(fil, e.desenf, if (e.desenf.auto) masc else null)
         } else fil
         return withContext(Dispatchers.Default) { capas(des, e) }
     }
@@ -409,21 +413,11 @@ fun EditorScreen(a: MainActivity, media: Media) {
             value = withContext(Dispatchers.Default) { Edit.geometria(b, ed.geo.copy(recorte = Recorte())) }
         }
     }
-    // Resultado final (recortado, ajustado y con filtro)
-    val filtrada by produceState<Bitmap?>(null, geo, ed.geo.recorte, ed.aj, ed.estilo, ed.estiloAj) {
+    // Máscara del sujeto (fondo automático / sujeto a color), sobre la foto ya recortada
+    val quiereMascara = ed.quiereMascara
+    val mascaraAuto by produceState<Bitmap?>(null, geo, ed.geo.recorte, quiereMascara) {
         val g = geo
-        if (g != null) {
-            delay(60)
-            val rec = withContext(Dispatchers.Default) { Edit.recortar(g, ed.geo.recorte) }
-            val aj = Edit.ajustar(rec, ed.aj)
-            val est = ed.estilo
-            value = if (est != null) Fx.apply(aj, FxUniforms.from(est, ed.estiloAj)) else aj
-        }
-    }
-    // Máscara del sujeto (fondo automático), sobre la foto ya recortada
-    val mascaraAuto by produceState<Bitmap?>(null, geo, ed.geo.recorte, ed.desenf.auto) {
-        val g = geo
-        if (!ed.desenf.auto) {
+        if (!quiereMascara) {
             value = null
             estadoMascara = 0
         } else if (g != null) {
@@ -433,6 +427,19 @@ fun EditorScreen(a: MainActivity, media: Media) {
             estadoMascara = if (m == null) 3 else 2
         }
     }
+    // Resultado final (recortado, ajustado y con filtro)
+    val filtrada by produceState<Bitmap?>(null, geo, ed.geo.recorte, ed.aj, ed.estilo, ed.estiloAj, ed.sujetoColor, mascaraAuto) {
+        val g = geo
+        if (g != null) {
+            delay(60)
+            val rec = withContext(Dispatchers.Default) { Edit.recortar(g, ed.geo.recorte) }
+            val aj = Edit.ajustar(rec, ed.aj)
+            val est = ed.estilo
+            val m = mascaraAuto
+            val fil = if (est != null) Fx.apply(aj, FxUniforms.from(est, ed.estiloAj)) else aj
+            value = if (est != null && ed.sujetoColor && m != null) Desenfoques.combinar(fil, aj, m) else fil
+        }
+    }
     val desenfocada by produceState<Bitmap?>(null, filtrada, ed.desenf, mascaraAuto) {
         val f = filtrada
         if (f != null) {
@@ -440,7 +447,7 @@ fun EditorScreen(a: MainActivity, media: Media) {
                 value = f
             } else {
                 delay(80)
-                value = Desenfoques.aplicar(f, ed.desenf, mascaraAuto)
+                value = Desenfoques.aplicar(f, ed.desenf, if (ed.desenf.auto) mascaraAuto else null)
             }
         }
     }
@@ -605,6 +612,20 @@ fun EditorScreen(a: MainActivity, media: Media) {
                     Spacer(Modifier.height(10.dp))
                     if (ed.estilo != null) {
                         val ea = ed.estiloAj
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Pildora("Sujeto a color", ed.sujetoColor) { ed = ed.copy(sujetoColor = !ed.sujetoColor) }
+                            if (ed.sujetoColor) {
+                                Text(
+                                    when (estadoMascara) {
+                                        1 -> "Detectando…"
+                                        3 -> "No se encontró sujeto"
+                                        else -> "El filtro va solo en el fondo"
+                                    },
+                                    color = Suave, fontSize = 13.sp, modifier = Modifier.padding(start = 10.dp)
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(6.dp))
                         Deslizador("Intensidad", ea.intensidad, 0f..1f) { ed = ed.copy(estiloAj = ea.copy(intensidad = it)) }
                         Deslizador("Rojos", ea.rojos, 0f..1f) { ed = ed.copy(estiloAj = ea.copy(rojos = it)) }
                         Deslizador("Estructura", ea.estructura, 0f..1f) { ed = ed.copy(estiloAj = ea.copy(estructura = it)) }

@@ -135,6 +135,49 @@ object Boveda {
 
     fun asignarAlbum(c: Context, esp: Int, files: Set<String>, album: String) {
         guardar(c, esp, items(c, esp).map { if (it.file in files) it.copy(album = album) else it })
+        if (album.isNotBlank()) crearAlbum(c, esp, album)
+    }
+
+    // ---------- Álbumes privados (se guardan dentro del área, también los vacíos) ----------
+
+    private fun archivoAlbumes(c: Context, esp: Int) = File(dir(c, esp), "albumes.json")
+
+    fun albumesGuardados(c: Context, esp: Int): List<String> = try {
+        val f = archivoAlbumes(c, esp)
+        if (!f.exists()) emptyList()
+        else JSONArray(f.readText()).let { arr -> (0 until arr.length()).map { arr.getString(it) } }
+    } catch (e: Exception) {
+        emptyList()
+    }
+
+    private fun guardarAlbumes(c: Context, esp: Int, lista: List<String>) {
+        val arr = JSONArray()
+        lista.filter { it.isNotBlank() }.distinct().forEach { arr.put(it) }
+        archivoAlbumes(c, esp).writeText(arr.toString())
+    }
+
+    /** Álbumes con fotos y álbumes vacíos, en orden alfabético. */
+    fun todosAlbumes(c: Context, esp: Int, items: List<VItem>): List<String> =
+        (albumesGuardados(c, esp) + albumes(items)).filter { it.isNotBlank() }.distinct().sortedBy { it.lowercase() }
+
+    fun crearAlbum(c: Context, esp: Int, nombre: String) {
+        val n = nombre.trim()
+        if (n.isBlank()) return
+        val actuales = albumesGuardados(c, esp)
+        if (n !in actuales) guardarAlbumes(c, esp, actuales + n)
+    }
+
+    fun renombrarAlbum(c: Context, esp: Int, viejo: String, nuevo: String) {
+        val n = nuevo.trim()
+        if (n.isBlank() || n == viejo) return
+        guardar(c, esp, items(c, esp).map { if (it.album == viejo) it.copy(album = n) else it })
+        guardarAlbumes(c, esp, albumesGuardados(c, esp).filter { it != viejo } + n)
+    }
+
+    /** Quita el álbum; sus fotos NO se borran, quedan en «Todo» sin álbum. */
+    fun borrarAlbum(c: Context, esp: Int, nombre: String) {
+        guardar(c, esp, items(c, esp).map { if (it.album == nombre) it.copy(album = "") else it })
+        guardarAlbumes(c, esp, albumesGuardados(c, esp).filter { it != nombre })
     }
 
     // ---------- Meter y sacar ----------
@@ -236,6 +279,9 @@ object Boveda {
         val idx = indice(c, esp)
         zip.write(if (idx.exists()) idx.readBytes() else "[]".toByteArray())
         zip.closeEntry()
+        zip.putNextEntry(ZipEntry("albumes.json"))
+        zip.write(JSONArray(albumesGuardados(c, esp)).toString().toByteArray())
+        zip.closeEntry()
         for (v in todos) {
             zip.putNextEntry(ZipEntry(v.file))
             archivo(c, esp, v).inputStream().use { inp -> inp.copyTo(zip) }
@@ -262,6 +308,7 @@ object Boveda {
         }
         val zip = ZipInputStream(cis)
         var nuevos: List<VItem> = emptyList()
+        var albumesResp: List<String> = emptyList()
         var n = 0
         while (true) {
             val e = zip.nextEntry ?: break
@@ -269,6 +316,9 @@ object Boveda {
             if (nombre == "indice.json") {
                 val arr = JSONArray(String(zip.readBytes()))
                 nuevos = (0 until arr.length()).map { leer(arr.getJSONObject(it)) }
+            } else if (nombre == "albumes.json") {
+                val arr = JSONArray(String(zip.readBytes()))
+                albumesResp = (0 until arr.length()).map { arr.getString(it) }
             } else {
                 File(dir(c, esp), nombre).outputStream().use { zip.copyTo(it) }
                 n++
@@ -279,6 +329,7 @@ object Boveda {
         val actuales = items(c, esp)
         val existentes = actuales.map { it.file }.toSet()
         guardar(c, esp, actuales + nuevos.filter { it.file !in existentes })
+        if (albumesResp.isNotEmpty()) guardarAlbumes(c, esp, albumesGuardados(c, esp) + albumesResp)
         return n
     }
 }

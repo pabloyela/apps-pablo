@@ -68,6 +68,7 @@ class MainActivity : ComponentActivity(), PlayerHost {
     val guardando = mutableIntStateOf(0)
     val bovedaAbierta = mutableStateOf(false)
     val bovedaItems = mutableStateOf<List<VItem>>(emptyList())
+    val versionAlbumes = mutableIntStateOf(0)          // sube cuando cambian los álbumes privados
     var espacio = Boveda.REAL                         // área abierta: real o señuelo
     private var pinSesion: String? = null             // clave usada para abrir (para respaldos)
     val diasSinRespaldo = mutableStateOf<Int?>(null)  // aviso dentro del área privada
@@ -484,12 +485,46 @@ class MainActivity : ComponentActivity(), PlayerHost {
         }
     }
 
-    private fun guardarJpeg(bmp: Bitmap, nombre: String, carpeta: String): Uri? {
+    /** Firma varias fotos: guarda una copia con fecha (de la foto) y firma; los originales no se tocan. */
+    fun firmarLote(lista: List<Media>, f: String) {
+        val fotos = lista.filter { !it.video }
+        if (fotos.isEmpty()) {
+            aviso("Solo se pueden firmar fotos")
+            return
+        }
+        if (f != firma.value) guardarFirma(f)
+        aviso(if (fotos.size == 1) "Firmando 1 foto…" else "Firmando ${fotos.size} fotos…")
+        guardando.intValue++
+        lifecycleScope.launch {
+            var hechas = 0
+            for (m in fotos) {
+                try {
+                    val full = withContext(Dispatchers.IO) { decodificar(m.uri, 4000) } ?: continue
+                    val out = withContext(Dispatchers.Default) {
+                        Edit.capas(full, Edicion(sello = true, firma = f, fechaSello = m.date))
+                    }
+                    val carpeta = if (Repo.destinoValido(m.path)) m.path else "Pictures/Editadas/"
+                    val base = m.name.substringBeforeLast('.').ifBlank { "foto" }
+                    val uri = withContext(Dispatchers.IO) { guardarJpeg(out, "${base}_firmada.jpg", carpeta, m.date) }
+                    if (uri != null) hechas++
+                    if (out !== full) out.recycle()
+                    full.recycle()
+                } catch (t: Throwable) {
+                    // seguimos con las demás
+                }
+            }
+            guardando.intValue--
+            aviso(if (hechas == fotos.size) "Listo: $hechas firmadas" else "Firmadas $hechas de ${fotos.size}")
+            recargar()
+        }
+    }
+
+    private fun guardarJpeg(bmp: Bitmap, nombre: String, carpeta: String, fecha: Long = System.currentTimeMillis()): Uri? {
         val values = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, nombre)
             put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
             put(MediaStore.Images.Media.RELATIVE_PATH, carpeta)
-            put(MediaStore.Images.Media.DATE_TAKEN, System.currentTimeMillis())
+            put(MediaStore.Images.Media.DATE_TAKEN, fecha)
             put(MediaStore.Images.Media.IS_PENDING, 1)
         }
         val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: return null
@@ -687,9 +722,30 @@ class MainActivity : ComponentActivity(), PlayerHost {
     }
 
     fun albumBoveda(sel: List<VItem>, album: String) {
+        versionAlbumes.intValue++
         Boveda.asignarAlbum(this, espacio, sel.map { it.file }.toSet(), album.trim())
         bovedaItems.value = Boveda.items(this, espacio)
     }
+
+    fun crearAlbumBoveda(nombre: String) {
+        versionAlbumes.intValue++
+        Boveda.crearAlbum(this, espacio, nombre)
+        bovedaItems.value = Boveda.items(this, espacio)
+    }
+
+    fun renombrarAlbumBoveda(viejo: String, nuevo: String) {
+        versionAlbumes.intValue++
+        Boveda.renombrarAlbum(this, espacio, viejo, nuevo)
+        bovedaItems.value = Boveda.items(this, espacio)
+    }
+
+    fun borrarAlbumBoveda(nombre: String) {
+        versionAlbumes.intValue++
+        Boveda.borrarAlbum(this, espacio, nombre)
+        bovedaItems.value = Boveda.items(this, espacio)
+    }
+
+    fun albumesBoveda(items: List<VItem>): List<String> = Boveda.todosAlbumes(this, espacio, items)
 
     fun abrirVideoBoveda(item: VItem) {
         ir(Pant.Reproductor(Uri.fromFile(Boveda.archivo(this, espacio, item)), item.name))
