@@ -1,0 +1,107 @@
+name: Compilar apps
+
+# Al subir cambios se compilan SOLO las apps cuya carpeta cambió.
+# Si cambia "comun/" se compilan Claroscuro y Baúl (las dos usan los efectos).
+# Desde la pestaña Actions puedes compilar a mano una app o todas.
+
+on:
+  push:
+  workflow_dispatch:
+    inputs:
+      app:
+        description: "¿Qué app compilar?"
+        type: choice
+        default: todas
+        options: [todas, pelis, claroscuro, baul]
+
+permissions:
+  contents: write
+
+jobs:
+  detectar:
+    runs-on: ubuntu-latest
+    outputs:
+      apps: ${{ steps.cambios.outputs.apps }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: cambios
+        shell: bash
+        run: |
+          todas='["pelis","claroscuro","baul"]'
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            if [ "${{ inputs.app }}" = "todas" ]; then echo "apps=$todas" >> "$GITHUB_OUTPUT"
+            else echo "apps=[\"${{ inputs.app }}\"]" >> "$GITHUB_OUTPUT"; fi
+            exit 0
+          fi
+          antes="${{ github.event.before }}"
+          if [ -z "$antes" ] || [ "$antes" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$antes" 2>/dev/null; then
+            echo "Primera subida: se compilan todas"
+            echo "apps=$todas" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          archivos=$(git diff --name-only "$antes" "${{ github.sha }}")
+          echo "Archivos cambiados:"; echo "$archivos"
+          lista=()
+          general=$(echo "$archivos" | grep -E '^(gradle/|gradlew|build\.gradle\.kts|settings\.gradle\.kts|gradle\.properties|\.github/)' || true)
+          comun=$(echo "$archivos" | grep -E '^comun/' || true)
+          for app in pelis claroscuro baul; do
+            if [ -n "$general" ] || echo "$archivos" | grep -q "^$app/"; then lista+=("$app")
+            elif [ -n "$comun" ] && [ "$app" != "pelis" ]; then lista+=("$app"); fi
+          done
+          json=$(printf '"%s",' "${lista[@]}"); json="[${json%,}]"
+          [ "$json" = '[""]' ] && json='[]'
+          echo "Se compilan: $json"
+          echo "apps=$json" >> "$GITHUB_OUTPUT"
+
+  compilar:
+    needs: detectar
+    if: needs.detectar.outputs.apps != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        app: ${{ fromJson(needs.detectar.outputs.apps) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Preparar Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Compilar ${{ matrix.app }}
+        run: |
+          chmod +x gradlew
+          ./gradlew :${{ matrix.app }}:assembleDebug --stacktrace
+
+      - name: Nombrar el APK
+        id: apk
+        shell: bash
+        run: |
+          case "${{ matrix.app }}" in
+            pelis) nombre=Pelis ;; claroscuro) nombre=Claroscuro ;; baul) nombre=Baul ;;
+          esac
+          version=$(grep -oP 'versionName = "\K[^"]+' ${{ matrix.app }}/build.gradle.kts)
+          mkdir -p salida
+          cp ${{ matrix.app }}/build/outputs/apk/debug/*.apk "salida/${nombre}-${version}.apk"
+          echo "nombre=$nombre" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Guardar APK (pestaña Actions)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.apk.outputs.nombre }}-${{ steps.apk.outputs.version }}
+          path: salida/*.apk
+
+      - name: Publicar en Releases (para descargar desde el teléfono)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ matrix.app }}-v${{ steps.apk.outputs.version }}
+          name: ${{ steps.apk.outputs.nombre }} ${{ steps.apk.outputs.version }}
+          files: salida/*.apk
+          make_latest: false
