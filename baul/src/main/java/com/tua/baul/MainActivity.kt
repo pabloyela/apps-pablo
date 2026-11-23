@@ -69,6 +69,8 @@ class MainActivity : ComponentActivity(), PlayerHost {
     val bovedaAbierta = mutableStateOf(false)
     val bovedaItems = mutableStateOf<List<VItem>>(emptyList())
     val versionAlbumes = mutableIntStateOf(0)          // sube cuando cambian los álbumes privados
+    val albumPrivado = mutableStateOf<String?>("")     // vista del área privada: "" = sin álbum, null = ver todo
+    private var salidaDesde = 0L                       // cuándo salimos "a propósito" (compartir, video…)
     var espacio = Boveda.REAL                         // área abierta: real o señuelo
     private var pinSesion: String? = null             // clave usada para abrir (para respaldos)
     val diasSinRespaldo = mutableStateOf<Int?>(null)  // aviso dentro del área privada
@@ -146,6 +148,9 @@ class MainActivity : ComponentActivity(), PlayerHost {
 
     override fun onResume() {
         super.onResume()
+        // Si salimos a compartir (o a otra app nuestra) y tardamos más de 5 minutos, el área privada se cierra
+        if (salidaDesde > 0L && System.currentTimeMillis() - salidaDesde > 5 * 60_000L) cerrarBoveda()
+        salidaDesde = 0L
         salidaInterna = false
         if (permiso.value) recargar()
     }
@@ -154,7 +159,7 @@ class MainActivity : ComponentActivity(), PlayerHost {
         super.onStop()
         // Al salir de la app, el área privada se cierra sola
         // (salvo que la hayamos dejado nosotros para ver un video o elegir un archivo)
-        if (!salidaInterna) cerrarBoveda()
+        if (!salidaInterna) cerrarBoveda() else salidaDesde = System.currentTimeMillis()
     }
 
     // ---------- Permisos ----------
@@ -270,6 +275,14 @@ class MainActivity : ComponentActivity(), PlayerHost {
         dir.listFiles()?.filter { System.currentTimeMillis() - it.lastModified() > 3_600_000 }?.forEach { it.delete() }
         val f = java.io.File(dir, m.name.ifBlank { "foto.jpg" })
         contentResolver.openInputStream(m.uri)?.use { inp -> f.outputStream().use { inp.copyTo(it) } }
+        quitarExif(f)
+        FileProvider.getUriForFile(this, "com.tua.baul.archivos", f)
+    } catch (e: Exception) {
+        null
+    }
+
+    /** Quita GPS, marca, modelo y número de serie (sin recomprimir la foto). */
+    private fun quitarExif(f: java.io.File) {
         val ex = androidx.exifinterface.media.ExifInterface(f)
         listOf(
             androidx.exifinterface.media.ExifInterface.TAG_GPS_LATITUDE,
@@ -288,20 +301,19 @@ class MainActivity : ComponentActivity(), PlayerHost {
             androidx.exifinterface.media.ExifInterface.TAG_BODY_SERIAL_NUMBER
         ).forEach { ex.setAttribute(it, null) }
         ex.saveAttributes()
-        FileProvider.getUriForFile(this, "com.tua.baul.archivos", f)
-    } catch (e: Exception) {
-        null
     }
 
-    private fun enviar(uris: List<Uri>, lista: List<Media>) {
+    private fun enviar(uris: List<Uri>, lista: List<Media>) = enviarMimes(uris, lista.map { it.mime })
+
+    private fun enviarMimes(uris: List<Uri>, mimes: List<String>) {
         val intent = if (uris.size == 1) {
             Intent(Intent.ACTION_SEND).apply {
-                type = lista[0].mime
+                type = mimes.firstOrNull() ?: "*/*"
                 putExtra(Intent.EXTRA_STREAM, uris[0])
             }
         } else {
             Intent(Intent.ACTION_SEND_MULTIPLE).apply {
-                type = if (lista.all { it.video }) "video/*" else if (lista.none { it.video }) "image/*" else "*/*"
+                type = if (mimes.all { esVideoMime(it) }) "video/*" else if (mimes.none { esVideoMime(it) }) "image/*" else "*/*"
                 putParcelableArrayListExtra(Intent.EXTRA_STREAM, ArrayList<Uri>(uris))
             }
         }
@@ -642,6 +654,8 @@ class MainActivity : ComponentActivity(), PlayerHost {
         if (!bovedaAbierta.value) return
         bovedaAbierta.value = false
         bovedaItems.value = emptyList()
+        albumPrivado.value = ""
+        borrarCopiasPrivadas()
         pinSesion = null
         diasSinRespaldo.value = null
         while (pila.size > 1 && pila.any { it is Pant.Boveda || it is Pant.VisorBoveda || it is Pant.Patron }) {
@@ -725,6 +739,53 @@ class MainActivity : ComponentActivity(), PlayerHost {
         versionAlbumes.intValue++
         Boveda.asignarAlbum(this, espacio, sel.map { it.file }.toSet(), album.trim())
         bovedaItems.value = Boveda.items(this, espacio)
+    }
+
+    /** Lo que se ve ahora en el área privada (según el álbum elegido). */
+    fun itemsVistaPrivada(): List<VItem> {
+        val f = albumPrivado.value
+        val t = bovedaItems.value
+        return if (f == null) t else t.filter { it.album == f }
+    }
+
+    /**
+     * Compartir desde el área privada: copias temporales (sin ubicación si así lo tienes),
+     * que se borran al cerrar el área privada.
+     */
+    fun compartirBoveda(sel: List<VItem>) {
+        if (sel.isEmpty()) return
+        val esp = espacio
+        lifecycleScope.launch {
+            val uris = withContext(Dispatchers.IO) {
+                val dir = java.io.File(cacheDir, "compartir/p").apply { mkdirs() }
+                val usados = mutableSetOf<String>()
+                sel.mapNotNull { v ->
+                    try {
+                        var nombre = v.name.ifBlank { v.file }
+                        if (!usados.add(nombre)) nombre = "${usados.size}_$nombre".also { usados.add(it) }
+                        val f = java.io.File(dir, nombre)
+                        Boveda.archivo(this@MainActivity, esp, v).inputStream().use { i -> f.outputStream().use { i.copyTo(it) } }
+                        if (quitarMeta.value && (v.mime == "image/jpeg" || v.mime == "image/jpg")) quitarExif(f)
+                        FileProvider.getUriForFile(this@MainActivity, "com.tua.baul.archivos", f)
+                    } catch (e: Exception) {
+                        null
+                    }
+                }
+            }
+            if (uris.isEmpty()) {
+                aviso("No se pudo compartir")
+                return@launch
+            }
+            salidaInterna = true
+            enviarMimes(uris, sel.map { it.mime })
+        }
+    }
+
+    private fun borrarCopiasPrivadas() {
+        try {
+            java.io.File(cacheDir, "compartir/p").listFiles()?.forEach { it.delete() }
+        } catch (_: Exception) {
+        }
     }
 
     fun crearAlbumBoveda(nombre: String) {

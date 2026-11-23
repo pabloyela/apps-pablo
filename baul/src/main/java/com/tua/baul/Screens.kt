@@ -71,6 +71,7 @@ import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.Folder
+import androidx.compose.material.icons.rounded.Inbox
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Photo
@@ -1348,7 +1349,7 @@ private fun AjustesScreen(a: MainActivity) {
             Spacer(Modifier.height(12.dp))
             TarjetaAjuste("Tamaño de miniaturas", "Pellizca la cuadrícula de fotos para hacerlas más grandes o pequeñas.", null) {}
             Spacer(Modifier.height(24.dp))
-            Text("Baúl 2.7 · Tecnología Universal Avanzada", color = Suave, fontSize = 13.sp)
+            Text("Baúl 2.8 · Tecnología Universal Avanzada", color = Suave, fontSize = 13.sp)
         }
     }
     if (dialogoClave) ClaveDialog(a, 0) { dialogoClave = false; refrescar++ }
@@ -1494,7 +1495,7 @@ private fun BovedaScreen(a: MainActivity) {
     val todosItems = a.bovedaItems.value
     var sel by remember { mutableStateOf(setOf<String>()) }
     var dialogo by remember { mutableStateOf(DialogoBoveda.NADA) }
-    var albumSel by remember { mutableStateOf<String?>(null) } // null = todo
+    var albumSel by a.albumPrivado // "" = sin álbum, null = ver todo
     var dialogoAlbum by remember { mutableStateOf(false) }
     var nuevoAlbum by remember { mutableStateOf(false) }
     var opcionesAlbum by remember { mutableStateOf<String?>(null) }
@@ -1537,8 +1538,9 @@ private fun BovedaScreen(a: MainActivity) {
         // Álbumes con portada (mantén presionado uno para renombrarlo o quitarlo)
         LazyRow(contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             item {
-                AlbumPrivado(a, "Todo", todosItems.firstOrNull(), todosItems.size, albumSel == null, Icons.Rounded.PhotoLibrary,
-                    onClick = { albumSel = null; sel = emptySet() }, onLongClick = {})
+                val sueltos = todosItems.filter { it.album.isBlank() }
+                AlbumPrivado(a, "Sin álbum", sueltos.firstOrNull(), sueltos.size, albumSel == "", Icons.Rounded.Inbox,
+                    onClick = { albumSel = ""; sel = emptySet() }, onLongClick = {})
             }
             items(albumes) { al ->
                 val delAlbum = todosItems.filter { it.album == al }
@@ -1549,11 +1551,21 @@ private fun BovedaScreen(a: MainActivity) {
                 AlbumPrivado(a, "Nuevo", null, -1, false, Icons.Rounded.CreateNewFolder,
                     onClick = { nuevoAlbum = true }, onLongClick = {})
             }
+            item {
+                AlbumPrivado(a, "Ver todo", null, todosItems.size, albumSel == null, Icons.Rounded.PhotoLibrary,
+                    onClick = { albumSel = null; sel = emptySet() }, onLongClick = {})
+            }
         }
         Box(Modifier.weight(1f)) {
-            if (items.isEmpty() && albumSel != null) {
+            if (items.isEmpty() && albumSel == "" && todosItems.isNotEmpty()) {
                 Text(
-                    "Álbum vacío.\n\nPara llenarlo: ve a «Todo», selecciona fotos o videos y toca «Álbum».",
+                    "Todo está guardado en álbumes.\n\nLo nuevo que pases a privado aparecerá aquí.",
+                    color = Suave, fontSize = 15.sp, textAlign = TextAlign.Center,
+                    modifier = Modifier.align(Alignment.Center).padding(32.dp)
+                )
+            } else if (items.isEmpty() && !albumSel.isNullOrEmpty()) {
+                Text(
+                    "Álbum vacío.\n\nPara llenarlo: ve a «Sin álbum» o «Ver todo», selecciona fotos o videos y toca «Álbum».",
                     color = Suave, fontSize = 15.sp, textAlign = TextAlign.Center,
                     modifier = Modifier.align(Alignment.Center).padding(32.dp)
                 )
@@ -1573,7 +1585,7 @@ private fun BovedaScreen(a: MainActivity) {
                             Modifier.aspectRatio(1f).padding(1.dp).combinedClickable(
                                 onClick = {
                                     if (sel.isNotEmpty()) sel = if (s) sel - v.file else sel + v.file
-                                    else a.ir(Pant.VisorBoveda(todosItems.indexOf(v).coerceAtLeast(0)))
+                                    else a.ir(Pant.VisorBoveda(i))
                                 },
                                 onLongClick = { sel = if (s) sel - v.file else sel + v.file }
                             )
@@ -1600,6 +1612,7 @@ private fun BovedaScreen(a: MainActivity) {
         if (elegidos.isNotEmpty()) {
             Row(Modifier.fillMaxWidth().background(Tarjeta).padding(8.dp)) {
                 Accion(Icons.Rounded.SelectAll, "Todo") { sel = items.map { it.file }.toSet() }
+                Accion(Icons.Rounded.Share, "Compartir") { a.compartirBoveda(elegidos) }
                 Accion(Icons.Rounded.CreateNewFolder, "Álbum") { dialogoAlbum = true }
                 Accion(Icons.Rounded.Unarchive, "Sacar", Acento) { a.sacarDeBoveda(elegidos); sel = emptySet() }
                 Accion(Icons.Rounded.DeleteForever, "Eliminar", Color(0xFFFF6B6B)) { a.eliminarDeBoveda(elegidos); sel = emptySet() }
@@ -1689,7 +1702,7 @@ private fun BovedaScreen(a: MainActivity) {
                 TextButton(onClick = {
                     if (confirmarQuitar) {
                         a.borrarAlbumBoveda(opAl)
-                        if (albumSel == opAl) albumSel = null
+                        if (albumSel == opAl) albumSel = ""
                     } else if (nombre.isNotBlank() && nombre.trim() != opAl) {
                         a.renombrarAlbumBoveda(opAl, nombre.trim())
                         if (albumSel == opAl) albumSel = nombre.trim()
@@ -1745,7 +1758,9 @@ private fun BovedaScreen(a: MainActivity) {
 
 @Composable
 private fun VisorBovedaScreen(a: MainActivity, inicio: Int) {
-    val items = a.bovedaItems.value
+    val todos = a.bovedaItems.value
+    val filtro = a.albumPrivado.value
+    val items = remember(todos, filtro) { a.itemsVistaPrivada() }
     if (items.isEmpty()) {
         LaunchedEffect(Unit) { a.atras() }
         return
@@ -1780,6 +1795,7 @@ private fun VisorBovedaScreen(a: MainActivity, inicio: Int) {
                 Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(Color(0x99000000))
                     .windowInsetsPadding(WindowInsets.safeDrawing).padding(8.dp)
             ) {
+                Accion(Icons.Rounded.Share, "Compartir") { a.compartirBoveda(listOf(actual)) }
                 Accion(Icons.Rounded.Unarchive, "Sacar", Acento) { a.sacarDeBoveda(listOf(actual)) }
                 Accion(Icons.Rounded.DeleteForever, "Eliminar", Color(0xFFFF6B6B)) { a.eliminarDeBoveda(listOf(actual)) }
             }
