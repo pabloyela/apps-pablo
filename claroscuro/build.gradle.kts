@@ -12,8 +12,8 @@ android {
         applicationId = "com.tua.claroscuro"
         minSdk = 29
         targetSdk = 35
-        versionCode = 9
-        versionName = "1.8"
+        versionCode = 10
+        versionName = "1.9"
     }
 
     // Llave fija: cada APK nuevo se instala encima del anterior

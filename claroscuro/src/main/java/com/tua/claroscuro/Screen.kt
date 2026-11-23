@@ -59,6 +59,17 @@ import androidx.compose.material.icons.rounded.Smartphone
 import androidx.compose.material.icons.rounded.Timer
 import androidx.compose.material.icons.rounded.TimerOff
 import androidx.compose.material.icons.rounded.Tune
+import androidx.compose.material.icons.rounded.Opacity
+import androidx.compose.material.icons.rounded.FormatColorFill
+import androidx.compose.material.icons.rounded.Texture
+import androidx.compose.material.icons.rounded.Gradient
+import androidx.compose.material.icons.rounded.Flare
+import androidx.compose.material.icons.rounded.Contrast
+import androidx.compose.material.icons.rounded.BrightnessMedium
+import androidx.compose.material.icons.rounded.Grain
+import androidx.compose.material.icons.rounded.Vignette
+import androidx.compose.material.icons.rounded.Draw
+import androidx.compose.material.icons.rounded.RestartAlt
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.OutlinedTextField
@@ -422,26 +433,24 @@ fun CameraScreen(a: MainActivity) {
                 panel = false
                 a.savePrefs()
             }
-        } else LazyRow(
-            contentPadding = PaddingValues(horizontal = Margen),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            modifier = Modifier.padding(vertical = 10.dp)
-        ) {
-            item {
-                Chip(
-                    texto = "Ajustes",
-                    icono = Icons.Rounded.Tune,
-                    activo = panel
-                ) {
-                    panel = !panel
-                    if (!panel) a.savePrefs()
-                }
+        } else Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Spacer(Modifier.width(Margen - 8.dp))
+            Herram(Icons.Rounded.Tune, "Ajustes", activo = false, marca = a.ajustes.value.intensidad < 0.05f) {
+                panel = true
             }
-            items(Estilo.entries) { e ->
-                Chip(texto = e.nombre, icono = null, activo = e == estilo) {
-                    a.estilo.value = e
-                    a.ajustes.value = Ajustes.de(e, a.ajustes.value)
-                    a.savePrefs()
+            LazyRow(
+                contentPadding = PaddingValues(end = Margen),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                items(Estilo.entries) { e ->
+                    EstiloTab(e.nombre, e == estilo) {
+                        a.estilo.value = e
+                        var nuevo = Ajustes.de(e, a.ajustes.value)
+                        // Si la intensidad quedó en 0 el efecto no se ve: al elegir estilo vuelve a 100
+                        if (nuevo.intensidad < 0.05f) nuevo = nuevo.copy(intensidad = 1f)
+                        a.ajustes.value = nuevo
+                        a.savePrefs()
+                    }
                 }
             }
         }
@@ -702,16 +711,58 @@ private fun DialogoFirma(a: MainActivity, onCerrar: () -> Unit) {
 
 // ---------- Barra de ajustes: un ajuste a la vez, sin tapar el visor ----------
 
-private enum class Param(val nombre: String, val min: Float, val max: Float) {
-    INTENSIDAD("Intensidad", 0f, 1f),
-    ROJOS("Rojos", 0f, 1f),
-    ESTRUCTURA("Estructura", 0f, 1f),
-    VIRADO("Virado", 0f, 1f),
-    HALACION("Halación", 0f, 1f),
-    CONTRASTE("Contraste", -1f, 1f),
-    BRILLO("Brillo", -1f, 1f),
-    GRANO("Grano", 0f, 1f),
-    VINETA("Viñeta", 0f, 1f)
+private enum class Param(val nombre: String, val corto: String, val icono: ImageVector, val min: Float, val max: Float) {
+    INTENSIDAD("Intensidad", "Intensidad", Icons.Rounded.Opacity, 0f, 1f),
+    ROJOS("Rojos", "Rojos", Icons.Rounded.FormatColorFill, 0f, 1f),
+    ESTRUCTURA("Estructura", "Estructura", Icons.Rounded.Texture, 0f, 1f),
+    VIRADO("Virado", "Virado", Icons.Rounded.Gradient, 0f, 1f),
+    HALACION("Halación", "Halación", Icons.Rounded.Flare, 0f, 1f),
+    CONTRASTE("Contraste", "Contraste", Icons.Rounded.Contrast, -1f, 1f),
+    BRILLO("Brillo", "Brillo", Icons.Rounded.BrightnessMedium, -1f, 1f),
+    GRANO("Grano", "Grano", Icons.Rounded.Grain, 0f, 1f),
+    VINETA("Viñeta", "Viñeta", Icons.Rounded.Vignette, 0f, 1f)
+}
+
+/** Botón chico como la barra de Pelis: ícono arriba y nombre abajo; punto si está cambiado. */
+@Composable
+private fun Herram(icono: ImageVector, texto: String, activo: Boolean, marca: Boolean = false, onClick: () -> Unit) {
+    Column(
+        Modifier.width(66.dp).clip(RoundedCornerShape(12.dp)).clickable(onClick = onClick)
+            .padding(vertical = 6.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        val c = if (activo) Color.White else Color(0xB3FFFFFF)
+        Icon(icono, texto, tint = c, modifier = Modifier.size(24.dp))
+        Text(
+            texto, color = c, fontSize = 11.sp, maxLines = 1,
+            fontWeight = if (activo) FontWeight.Bold else FontWeight.Normal,
+            modifier = Modifier.padding(top = 3.dp)
+        )
+        Box(
+            Modifier.padding(top = 3.dp).size(4.dp).clip(CircleShape)
+                .background(if (marca) Color.White else Color.Transparent)
+        )
+    }
+}
+
+/** Nombre de estilo: texto simple; el elegido en blanco con una rayita abajo. */
+@Composable
+private fun EstiloTab(texto: String, activo: Boolean, onClick: () -> Unit) {
+    Column(
+        Modifier.clip(RoundedCornerShape(10.dp)).clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            texto, fontSize = 14.sp, maxLines = 1,
+            color = if (activo) Color.White else Color(0x99FFFFFF),
+            fontWeight = if (activo) FontWeight.Bold else FontWeight.Normal
+        )
+        Box(
+            Modifier.padding(top = 4.dp).width(18.dp).height(2.dp).clip(RoundedCornerShape(1.dp))
+                .background(if (activo) Color.White else Color.Transparent)
+        )
+    }
 }
 
 private fun valorDe(a: Ajustes, p: Param): Float = when (p) {
@@ -767,20 +818,17 @@ private fun BarraAjustes(a: MainActivity, onListo: () -> Unit) {
                 inactiveTrackColor = Color(0x44FFFFFF)
             )
         )
-        // Qué ajuste mover (desliza para ver todos)
-        LazyRow(
-            contentPadding = PaddingValues(horizontal = Margen),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            item { Chip(texto = "Listo", icono = Icons.Rounded.Check, activo = true) { onListo() } }
+        // Qué ajuste mover (desliza para ver todos). Punto blanco = cambiado.
+        val porDefecto = Ajustes.de(a.estilo.value)
+        LazyRow(contentPadding = PaddingValues(horizontal = Margen - 8.dp)) {
+            item { Herram(Icons.Rounded.Check, "Listo", activo = true) { onListo() } }
             items(Param.entries) { pp ->
-                Chip(texto = pp.nombre, icono = null, activo = pp == p) { p = pp }
+                val cambiado = kotlin.math.abs(valorDe(aj, pp) - valorDe(porDefecto, pp)) > 0.01f
+                Herram(pp.icono, pp.corto, activo = pp == p, marca = cambiado) { p = pp }
             }
+            item { Herram(Icons.Rounded.Draw, "Firma", activo = false) { firma = true } }
             item {
-                Chip(texto = "Firma", icono = null, activo = false) { firma = true }
-            }
-            item {
-                Chip(texto = "Restablecer", icono = null, activo = false) {
+                Herram(Icons.Rounded.RestartAlt, "Restablecer", activo = false) {
                     a.ajustes.value = Ajustes.de(a.estilo.value)
                     a.savePrefs()
                 }
